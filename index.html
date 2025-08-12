@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced PDF Measuring & Analysis Tool</title>
+    <!-- Tailwind CSS for utility-first styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- pdf.js library for PDF rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <!-- Google Fonts - Inter for modern typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; /* Prevent body scrollbars */
+        }
+        .pdf-page-canvas {
+            border: 1px solid #ccc;
+            /* border-radius: 0.5rem; */ /* Removed for classic look */
+        }
+        .overlay-page-canvas {
+            /* border-radius: 0.5rem; */ /* Removed for classic look */
+            /* cursor is set dynamically by JS */
+        }
+        .measurement-label {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 3px 6px;
+            border-radius: 5px;
+            font-size: 10px; /* Slightly smaller for less intrusion */
+            font-family: 'Inter', sans-serif;
+            pointer-events: none;
+            white-space: nowrap;
+            z-index: 10;
+            transform: translate(-50%, -50%); /* Center the label */
+        }
+        .tool-btn.active {
+            background-color: #4f46e5; /* Indigo-600 */
+            color: white;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border-left-color: #4f46e5;
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #pdf-pages-container, #font-inspector-pdf-container {
+            flex-grow: 1;
+            overflow: auto; 
+            padding: 1.5rem;
+            display: grid;
+            place-items: center;
+            gap: 1rem;
+            background-color: #e5e7eb; /* bg-gray-200 */
+            position: relative;
+            min-width: 0; /* Prevents flexbox overflow issues, ensuring scrollbars appear */
+        }
+        .page-wrapper {
+            position: relative;
+            /* Removed shadow and radius for a classic, sharper look */
+            /* box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); */
+            /* border-radius: 0.5rem; */
+            /* overflow: hidden; */
+        }
+        .overlay-page-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+        .cursor-crosshair { cursor: crosshair; }
+
+        #page-navigation-controls button {
+            flex-shrink: 0;
+        }
+        #page-navigation-controls input {
+            text-align: center;
+        }
+        .selection-info-label, .page-dimensions-label {
+            font-weight: 500; /* medium */
+            color: #4b5563; /* gray-600 */
+        }
+        .selection-info-value, .page-dimensions-value {
+            color: #1f2937; /* gray-800 */
+            word-break: break-all; /* Prevent long font names from breaking layout */
+        }
+         .page-dimensions-group {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap-x: 0.5rem; /* Reduced gap for closer label-value pairing */
+            align-items: center;
+        }
+        #manual-leading-input {
+            width: 5rem; /* Adjust width as needed */
+            padding: 0.25rem 0.5rem;
+            border: 1px solid #d1d5db; /* gray-300 */
+            border-radius: 0.25rem; /* rounded-md */
+        }
+        #live-selection-info-box {
+            position: fixed;
+            background-color: rgba(31, 41, 55, 0.85); /* bg-gray-800 with opacity */
+            color: white;
+            font-size: 0.75rem; /* text-xs */
+            padding: 0.5rem; /* p-2 */
+            border-radius: 0.375rem; /* rounded-md */
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); /* shadow-lg */
+            pointer-events: none; /* Pass clicks through */
+            z-index: 50;
+            min-width: 130px; /* Ensure enough space for content */
+            border: 1px solid rgba(75, 85, 99, 0.7); /* border-gray-600 with opacity */
+        }
+        #live-selection-info-box .label { color: #9ca3af; /* gray-400 */ } /* Lighter color for labels */
+        #live-selection-info-box .value { color: #ffffff; } /* White for values */
+
+        /* View Menu Styles */
+        .view-menu-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+        }
+        .view-menu-item:hover {
+            background-color: #e5e7eb; /* gray-200 */
+        }
+        .view-menu-shortcut {
+            color: #6b7280; /* gray-500 */
+            font-size: 0.875rem;
+        }
+        .view-menu-separator {
+            height: 1px;
+            background-color: #d1d5db; /* gray-300 */
+            margin: 0.25rem 0;
+        }
+        .view-menu-item.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: transparent;
+        }
+        .view-menu-check {
+            width: 1.5rem;
+            text-align: center;
+        }
+        #font-inspector-font-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        #font-inspector-font-list li {
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+            cursor: default;
+            transition: background-color 0.2s;
+        }
+        #font-inspector-font-list li:last-child {
+            border-bottom: none;
+        }
+        #font-inspector-font-list li.highlighted {
+            background-color: #dbeafe; /* blue-100 */
+        }
+
+        #measurements-list li.selected {
+            background-color: #dbeafe; /* blue-100 */
+            font-weight: 500;
+        }
+
+        /* Classic Scrollbar styles based on user-provided image */
+        /* For Webkit browsers (Chrome, Safari, Edge) */
+        .classic-scrollbar::-webkit-scrollbar {
+            width: 17px;
+            height: 17px;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-track {
+            background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAXNSR0IArs4c6QAAABNJREFUGFdjZGBgZGBgZSAIAAINAgA1fA22Z3/2lAAAAABJRU5ErkJggg==");
+            background-repeat: repeat;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #e5e7eb; /* bg-gray-200 */
+            border: 2px solid;
+            border-color: #f9fafb #9ca3af #9ca3af #f9fafb; /* Lighter/darker grays from tailwind palette */
+            min-height: 17px;
+            min-width: 17px;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: #f3f4f6; /* gray-100 */
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button {
+            background-color: #e5e7eb; /* bg-gray-200 */
+            border: 2px solid;
+            border-color: #f9fafb #9ca3af #9ca3af #f9fafb;
+            height: 17px;
+            width: 17px;
+            display: block;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button:active {
+            border-color: #9ca3af #f9fafb #f9fafb #9ca3af; /* Inset */
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button:horizontal:decrement {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='17' height='17'%3E%3Cpath fill='%23374151' d='M10 5L10 12L6 8.5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button:horizontal:increment {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='17' height='17'%3E%3Cpath fill='%23374151' d='M7 5L7 12L11 8.5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button:vertical:decrement {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='17' height='17'%3E%3Cpath fill='%23374151' d='M5 10L12 10L8.5 6z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .classic-scrollbar::-webkit-scrollbar-button:vertical:increment {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='17' height='17'%3E%3Cpath fill='%23374151' d='M5 7L12 7L8.5 11z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        /* Corner piece that appears when both scrollbars are visible */
+        .classic-scrollbar::-webkit-scrollbar-corner {
+            background-color: #e5e7eb; /* bg-gray-200 */
+        }
+
+        /* Fallback for Firefox */
+        @supports (scrollbar-color: auto) {
+          .classic-scrollbar {
+            scrollbar-width: auto;
+            scrollbar-color: #d1d5db #e5e7eb; /* gray-300 on gray-200 */
+          }
+        }
+        #magnifier-loupe {
+            position: fixed;
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            border: 3px solid #4f46e5; /* Indigo */
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            pointer-events: none; /* Crucial so it doesn't block mouse events */
+            z-index: 100;
+            background-color: #fff; /* Fallback color */
+        }
+        #magnifier-canvas {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-gray-100 flex h-screen relative">
+
+    <!-- Measurement View -->
+    <div id="measurement-view" class="flex flex-col md:flex-row h-full w-full">
+        <!-- Controls Panel -->
+        <div class="w-full md:w-96 bg-white p-6 shadow-lg overflow-y-auto flex-shrink-0">
+            <h1 class="text-2xl font-bold mb-6 text-gray-800">PDF Inspector Tool</h1>
+
+            <div class="mb-6">
+                <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">Upload PDF</label>
+                <input type="file" id="file-upload" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100" accept="application/pdf"/>
+            </div>
+
+            <!-- Page Navigation (hidden until PDF is loaded) -->
+            <div id="page-navigation-controls" class="hidden items-center justify-between mb-4 p-2 bg-gray-100 rounded-lg">
+                <button type="button" id="prev-page-btn" class="px-3 py-1 bg-gray-200 rounded-lg hover:bg-gray-300 text-sm">&lt; Prev</button>
+                <div class="flex items-center space-x-1">
+                    <input type="number" id="page-num-input" class="w-16 p-1 border rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm">
+                    <span id="current-page-info" class="text-sm font-medium text-gray-700">of N</span>
+                    <button type="button" id="go-to-page-btn" class="px-3 py-1 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">Go</button>
+                </div>
+                <button type="button" id="next-page-btn" class="px-3 py-1 bg-gray-200 rounded-lg hover:bg-gray-300 text-sm">Next &gt;</button>
+            </div>
+
+            <!-- Page Dimensions Section (hidden until PDF is loaded) -->
+            <div id="page-dimensions-section" class="hidden mb-6 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Page Dimensions</h2>
+                <div class="space-y-1 text-sm">
+                    <div class="page-dimensions-group">
+                        <span class="page-dimensions-label">Trim (mm):</span>
+                        <span id="page-trim-mm" class="page-dimensions-value">--</span>
+                    </div>
+                    <div class="page-dimensions-group">
+                        <span class="page-dimensions-label">Trim (in):</span>
+                        <span id="page-trim-in" class="page-dimensions-value">--</span>
+                    </div>
+                    <div class="page-dimensions-group">
+                        <span class="page-dimensions-label text-xs text-gray-500">Source Box:</span>
+                        <span id="page-source-box" class="page-dimensions-value text-xs text-gray-500">--</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="zoom-controls" class="hidden items-center justify-center space-x-4 mb-4">
+                <button type="button" id="zoom-out-btn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">-</button>
+                <span id="zoom-level" class="text-sm font-medium">100%</span>
+                <button type="button" id="zoom-in-btn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">+</button>
+            </div>
+            
+            <div id="main-toolbar" class="hidden mb-6 relative">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Tools & View</h2>
+                <div class="flex rounded-md shadow-sm">
+                    <button id="view-menu-btn" type="button" class="tool-btn relative inline-flex items-center justify-center space-x-2 rounded-l-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10">View</button>
+                    <button id="selection-tool-btn" type="button" class="tool-btn active -ml-px relative inline-flex items-center justify-center space-x-2 bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10">Select</button>
+                    <button id="pan-tool-btn" type="button" class="tool-btn -ml-px relative inline-flex items-center justify-center space-x-2 bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10">Pan</button>
+                    <button id="font-inspector-tool-btn" type="button" class="tool-btn -ml-px relative inline-flex items-center justify-center space-x-2 bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10">Font Inspector</button>
+                    <button id="font-finder-tool-btn" type="button" class="tool-btn -ml-px relative inline-flex items-center justify-center space-x-2 rounded-r-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10">AI Font Finder</button>
+                </div>
+                <!-- View Dropdown Menu -->
+                <div id="view-dropdown-menu" class="hidden absolute left-0 mt-2 w-64 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-30">
+                    <div class="py-1 text-sm text-gray-700">
+                        <div id="view-menu-fullscreen" class="view-menu-item"><span>Full Screen</span><span class="view-menu-shortcut">Ctrl+L</span></div>
+                        <div class="view-menu-separator"></div>
+                        <div id="view-menu-zoom-in" class="view-menu-item"><span>Zoom In</span><span class="view-menu-shortcut">Ctrl++</span></div>
+                        <div id="view-menu-zoom-out" class="view-menu-item"><span>Zoom Out</span><span class="view-menu-shortcut">Ctrl+-</span></div>
+                        <div id="view-menu-zoom-to" class="view-menu-item disabled"><span>Zoom To...</span><span class="view-menu-shortcut">Ctrl+M</span></div>
+                        <div class="view-menu-separator"></div>
+                        <div id="view-menu-fit-window" class="view-menu-item"><span>Fit in Window</span><span class="view-menu-shortcut">Ctrl+0</span></div>
+                        <div id="view-menu-actual-size" class="view-menu-item"><span>Actual Size</span><span class="view-menu-shortcut">Ctrl+1</span></div>
+                        <div id="view-menu-fit-width" class="view-menu-item"><span>Fit Width</span><span class="view-menu-shortcut">Ctrl+2</span></div>
+                        <div id="view-menu-fit-visible" class="view-menu-item"><span>Fit Visible</span><span class="view-menu-shortcut">Ctrl+3</span></div>
+                        <div id="view-menu-reflow" class="view-menu-item disabled"><span>Reflow</span><span class="view-menu-shortcut">Ctrl+4</span></div>
+                        <div class="view-menu-separator"></div>
+                        <div id="view-menu-rotate-cw" class="view-menu-item"><span>Rotate Clockwise</span><span class="view-menu-shortcut">Ctrl+Shift++</span></div>
+                        <div id="view-menu-rotate-ccw" class="view-menu-item"><span>Rotate Counterclockwise</span><span class="view-menu-shortcut">Ctrl+Shift+-</span></div>
+                        <div class="view-menu-separator"></div>
+                        <div id="view-menu-proof-colors" class="view-menu-item disabled"><span>Proof Colors</span><span class="view-menu-shortcut">Ctrl+Y</span></div>
+                        <div id="view-menu-overprint" class="view-menu-item disabled"><span>Overprint Preview</span><span class="view-menu-shortcut">Ctrl+Alt+Shift+Y</span></div>
+                        <div class="view-menu-separator"></div>
+                        <div id="view-menu-grid" class="view-menu-item"><span class="view-menu-check" id="view-menu-grid-check"></span><span>Grid</span><span class="view-menu-shortcut">Ctrl+U</span></div>
+                        <div id="view-menu-snap-to-grid" class="view-menu-item disabled"><span class="view-menu-check" id="view-menu-snap-check"></span><span>Snap To Grid</span><span class="view-menu-shortcut">Ctrl+Shift+U</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-analysis-section" class="hidden mb-6 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Content Analysis</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                    <button type="button" id="analyze-page-btn" class="w-full bg-indigo-500 text-white py-2 rounded-lg hover:bg-indigo-600 transition text-sm">Analyze Lines/Words</button>
+                    <button type="button" id="measure-columns-btn" class="w-full bg-indigo-500 text-white py-2 rounded-lg hover:bg-indigo-600 transition text-sm">Measure Columns</button>
+                </div>
+                <div id="page-analysis-loader" class="hidden flex justify-center items-center py-2"><div class="spinner"></div></div>
+                <div id="page-analysis-results" class="hidden text-sm text-gray-700 grid grid-cols-2 gap-2">
+                    <div>Lines: <span id="lines-count">--</span></div>
+                    <div>Words: <span id="words-count">--</span></div>
+                </div>
+                <div id="column-analysis-results" class="hidden text-sm text-gray-700 mt-3 pt-3 border-t border-gray-200">
+                    <div class="flex justify-between items-center mb-1">
+                        <h3 class="font-semibold text-gray-600">Column Gutter Analysis</h3>
+                        <button id="clear-column-highlights-btn" class="text-xs text-red-500 hover:text-red-700">Clear</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <div class="font-medium">Left Col Width:</div><div class="text-right"><span id="left-column-width">--</span></div>
+                        <div class="font-medium">Right Col Width:</div><div class="text-right"><span id="right-column-width">--</span></div>
+                        <div class="font-medium">Gutter Space:</div><div class="text-right"><span id="gutter-space">--</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="auto-specs-section" class="hidden mb-6 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Auto-Generated Specs</h2>
+                <button type="button" id="generate-specs-btn" class="w-full bg-teal-500 text-white py-2 rounded-lg hover:bg-teal-600 transition text-sm">Generate Full Page Specs</button>
+                <div id="auto-specs-loader" class="hidden flex justify-center items-center py-2"><div class="spinner"></div></div>
+                <div id="auto-specs-results" class="hidden text-sm text-gray-700 mt-3 pt-3 border-t border-gray-200">
+                    <div class="space-y-1">
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Trim Size:</span><span id="spec-trim-size" class="text-right">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Primary Font:</span><span id="spec-font-family" class="text-right truncate" title="">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Primary Font Size:</span><span id="spec-font-size" class="text-right">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Primary Leading:</span><span id="spec-leading" class="text-right">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Text Width:</span><span id="spec-text-width" class="text-right">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Text Depth:</span><span id="spec-text-depth" class="text-right">--</span></div>
+                        <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Lines on Page:</span><span id="spec-lines-on-page" class="text-right">--</span></div>
+                        
+                        <div id="spec-column-data" class="hidden pt-2 mt-2 border-t border-gray-200 space-y-1">
+                            <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Left Col Width:</span><span id="spec-left-col-width" class="text-right">--</span></div>
+                            <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Right Col Width:</span><span id="spec-right-col-width" class="text-right">--</span></div>
+                            <div class="grid grid-cols-2 gap-x-2"><span class="font-medium">Gutter Space:</span><span id="spec-gutter-space" class="text-right">--</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="selection-info" class="hidden mb-6 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Selection Info</h2>
+                <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-sm mb-2">
+                    <div class="selection-info-label">Box W:</div><div class="selection-info-value"><span id="selection-w">--</span></div>
+                    <div class="selection-info-label">Box H:</div><div class="selection-info-value"><span id="selection-h">--</span></div>
+                    <div class="selection-info-label">Text W:</div><div class="selection-info-value"><span id="selection-text-w">--</span></div>
+                    <div class="selection-info-label">Auto Lead:</div><div class="selection-info-value"><span id="selection-text-leading">--</span></div>
+                    <div class="selection-info-label">Manual Lead (pt):</div><div><input type="number" id="manual-leading-input" placeholder="e.g. 12" class="text-sm p-0.5 border rounded"></div>
+                    <div class="selection-info-label">Text H/Lead:</div><div class="selection-info-value"><span id="selection-text-h-leading-ratio">--</span></div>
+                    <div class="selection-info-label">Family:</div><div class="selection-info-value truncate"><span id="selection-font-family" title="Font Family">--</span></div>
+                    <div class="selection-info-label">Style:</div><div class="selection-info-value truncate"><span id="selection-font-style" title="Font Style">--</span></div>
+                    <div class="selection-info-label">Size:</div><div class="selection-info-value"><span id="selection-font-size">--</span></div>
+                </div>
+            </div>
+
+            <div id="display-unit-controls" class="hidden mb-6">
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Display Units</h2>
+                <select id="display-unit" class="w-full p-2 border rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    <option value="pixels">pixels</option>
+                    <option value="feet">feet</option>
+                    <option value="inches" selected>inches</option>
+                    <option value="meters">meters</option>
+                    <option value="cm">cm</option>
+                    <option value="millimeters">millimeters</option>
+                    <option value="points">points</option>
+                    <option value="picas">picas</option>
+                </select>
+            </div>
+
+            <div>
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Measurements (Selections)</h2>
+                <ul id="measurements-list" class="space-y-2">
+                    <!-- Measurement items will be dynamically added here -->
+                </ul>
+                <button type="button" id="clear-measurements" class="w-full mt-4 bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition hidden">Clear All</button>
+            </div>
+        </div>
+
+        <!-- Main PDF Display Area -->
+        <main class="flex-grow flex flex-col bg-gray-200 min-w-0">
+            <div id="pdf-pages-container" class="classic-scrollbar"> <!-- Default cursor, will be overridden by tool -->
+                <div id="pdf-loading-indicator" class="absolute inset-0 flex items-center justify-center bg-gray-200 bg-opacity-75 text-gray-700 text-lg font-medium hidden z-20 rounded-lg">
+                    <div class="spinner mr-3"></div> Loading PDF...
+                </div>
+                <!-- Single page wrapper will be dynamically added here -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Font Finder View -->
+    <div id="font-finder-view" class="hidden absolute top-0 left-0 w-full h-full bg-gray-50 text-gray-800 z-20 flex flex-col">
+        <div class="flex-shrink-0 p-4 border-b border-gray-200 bg-white">
+            <div class="flex items-center space-x-4 max-w-4xl mx-auto">
+                <button type="button" id="back-to-measurement-from-finder-btn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 font-semibold">&larr; Back</button>
+                <h2 class="text-lg font-semibold text-gray-800">AI Font Finder</h2>
+            </div>
+        </div>
+        <div class="flex-grow overflow-y-auto">
+            <div class="container mx-auto px-4 py-8 md:py-12">
+                <div class="max-w-2xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+                    <div class="p-6 md:p-8">
+                        <!-- Header Section -->
+                        <div class="text-center mb-8">
+                            <svg class="mx-auto h-12 w-auto text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+                            </svg>
+                            <h1 class="text-2xl md:text-3xl font-bold text-gray-900 mt-4">3B2 Font Identification</h1>
+                            <p class="mt-2 text-gray-600">Provide the details below to have our AI accurately identify the font used in your 3B2 document.</p>
+                        </div>
+        
+                        <!-- Form Section -->
+                        <form id="font-finder-form" class="space-y-6">
+                            <!-- 3B2 Font Name Input -->
+                            <div>
+                                <label for="finder-font-name" class="block text-sm font-medium text-gray-700 mb-1">1. 3B2 Font Name (Optional)</label>
+                                <p class="text-sm text-gray-500 mb-2">Enter the full name (e.g., <code class="bg-gray-200 p-1 rounded">GHBIHN+AdvOT1ef757c0</code>). The tool will clean it automatically.</p>
+                                <input type="text" id="finder-font-name" name="font-name" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" placeholder="Enter 3B2 font name here...">
+                            </div>
+        
+                            <!-- Font Sample Input -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">2. Font Sample Image (Required)</label>
+                                <p class="text-sm text-gray-500 mb-2">Upload a clear image of the text (JPG, PNG).</p>
+                                <div id="finder-image-drop-area" class="mt-1 flex items-center justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer">
+                                    <div class="space-y-1 text-center">
+                                        <img id="finder-image-preview" class="hidden mx-auto h-24 w-auto rounded-md mb-4" />
+                                        <svg id="finder-image-upload-icon" class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                        </svg>
+                                        <div class="flex text-sm text-gray-600">
+                                            <label for="finder-font-sample" class="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500">
+                                                <span>Upload a file</span>
+                                                <input id="finder-font-sample" name="font-sample" type="file" class="sr-only" accept="image/jpeg,image/png">
+                                            </label>
+                                            <p class="pl-1">or drag and drop</p>
+                                        </div>
+                                        <p id="finder-font-sample-name" class="text-xs text-gray-500">PNG, JPG up to 10MB</p>
+                                    </div>
+                                </div>
+                            </div>
+        
+                            <!-- Submit Button -->
+                            <div class="pt-2">
+                                <button type="submit" id="finder-submit-button" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                    Identify Font
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <!-- Result/Message Area -->
+                    <div id="finder-result-area" class="hidden p-6 md:p-8 bg-gray-50 border-t border-gray-200">
+                        <div id="finder-result-content" class="text-left"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Font Inspector Page -->
+    <div id="font-inspector-page" class="hidden absolute top-0 left-0 w-full h-full flex flex-row bg-gray-200 z-10">
+        <div id="font-inspector-pdf-container" class="cursor-text classic-scrollbar">
+             <!-- Font Inspector PDF page will be dynamically added here -->
+        </div>
+        <aside id="font-inspector-sidebar" class="w-96 bg-white shadow-lg border-l border-gray-300 flex-shrink-0 flex flex-col">
+            <div class="p-4 border-b border-gray-200 sticky top-0 bg-white z-10">
+                 <div class="flex items-center space-x-4">
+                    <button type="button" id="back-to-measurement-view-btn" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 font-semibold">&larr; Back</button>
+                    <div>
+                       <h2 class="text-lg font-semibold text-gray-800">Fonts in Document</h2>
+                       <p id="font-inspector-summary" class="text-sm text-gray-500"></p>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-600 mt-2 uppercase">Click text in the preview to inspect</p>
+            </div>
+            <div id="font-inspector-list-container" class="flex-grow overflow-y-auto">
+                <!-- Font list will be dynamically added here -->
+            </div>
+            <div id="font-inspector-properties" class="p-4 border-t border-gray-200 flex-shrink-0 bg-gray-50">
+                 <h3 class="text-md font-semibold text-gray-800 mb-3">Selected Text Properties</h3>
+                 <div class="space-y-2 text-sm">
+                    <div class="grid grid-cols-2 gap-x-2">
+                        <span class="font-medium text-gray-500">Font Family</span>
+                        <span id="prop-font-family" class="text-gray-900 justify-self-end text-right break-all">--</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-2">
+                        <span class="font-medium text-gray-500">Font Size</span>
+                        <span id="prop-font-size" class="text-gray-900 justify-self-end text-right">--</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-2">
+                        <span class="font-medium text-gray-500">Horiz. Scale</span>
+                        <span id="prop-horiz-scale" class="text-gray-900 justify-self-end text-right">--</span>
+                    </div>
+                 </div>
+            </div>
+        </aside>
+    </div>
+
+    
+    <div id="custom-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-11/12 md:w-1/2 max-h-[80vh] flex flex-col">
+            <h3 id="modal-title" class="text-xl font-bold mb-4 text-gray-800">Notification</h3>
+            <div id="modal-content" class="text-gray-800 mb-4 overflow-y-auto">
+                <p id="modal-message"></p>
+            </div>
+            <div id="modal-buttons" class="flex justify-end space-x-4 mt-auto pt-4">
+                <button type="button" id="modal-cancel" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">Cancel</button>
+                <button type="button" id="modal-ok" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="status-toast" class="fixed bottom-5 right-5 bg-gray-800 text-white py-3 px-6 rounded-lg shadow-lg transform transition-all duration-300 opacity-0 translate-y-2 z-50">
+        <p id="status-message"></p>
+    </div>
+
+    <div id="live-selection-info-box" class="hidden" style="min-width: 130px;">
+        <div class="grid grid-cols-2 gap-x-1">
+            <span class="label">X:</span><span id="live-info-x-value" class="value">--</span>
+            <span class="label">Y:</span><span id="live-info-y-value" class="value">--</span>
+            <span class="label">W:</span><span id="live-info-w-value" class="value">--</span>
+            <span class="label">H:</span><span id="live-info-h-value" class="value">--</span>
+        </div>
+    </div>
+
+    <div id="magnifier-loupe" class="hidden">
+        <canvas id="magnifier-canvas"></canvas>
+    </div>
+
+<script type="importmap">
+  {
+    "imports": {
+      "@google/genai": "https://esm.run/@google/genai"
+    }
+  }
+</script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
